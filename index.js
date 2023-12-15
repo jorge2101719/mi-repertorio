@@ -1,108 +1,114 @@
 import express from 'express';
-import { fileURLToPath } from 'url';
-import { dirname } from 'path';
-import { readFileSync, writeFileSync } from 'fs';
-// import { readFie, writeFile } from 'fs:node/promises';
-// import cors from 'cors';
-// import { nanoid } from 'nanoid';
+import { writeFile, readFile } from 'node:fs/promises';
+import path from 'path';
 
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = dirname(__filename);
-
-// Instanciamos express
 const app = express();
+const PORT = 3000;
 
-// activación de middleware para enviar información al servidor
 app.use(express.json());
-// app.use(cors());
+app.use(express.static('public'));
 
-// Levantamos el servidor
-const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => {
-	console.log(`¡Servidor encendido! Puerto http://localhost:${PORT}`)
-});
+const getCanciones = async () => {
+  try {
+    const res = await readFile('repertorio.json', 'utf-8');
+    const canciones = JSON.parse(res);
+    return canciones;
+  } catch (error) {
+    console.log('Error al leer el archivo repertorio.json.', error.message);
+    if (error.code === 'ENOENT') {
+      const nuevasCanciones = [];
+      await writeFile('repertorio.json', JSON.stringify(nuevasCanciones));
+      return nuevasCanciones;
+    }
+  }
+};
 
+const guardarCanciones = async (repertorio) => {
+  try {
+    await writeFile('repertorio.json', JSON.stringify(repertorio));
+    console.log('Escritura de repertorio.json exitosa.');
+  } catch (error) {
+    console.log('Error al escribir en el archivo repertorio.json.', error.message);
+  }
+};
 
-// Lo que sigue, es básicamente lo que aparece en la guía de estudio
-
-// Uso del método GET en la raíz para que devuelva en archivo index.html
+// GET /index.html
 app.get('/', (req, res) => {
-	res.sendFile(__dirname + '/index.html');
-})
-
-// Comprobamos si canciones.json tiene o no elementos
-app.get('/canciones', (req, res) => {
-	try {
-		const canciones = JSON.parse(readFileSync('canciones.json'));
-
-		if(canciones.length === 0) {
-			res.status(404).send('La lista de canciones está vacía')
-		} else {
-			res.status(200).json(canciones);
-		}} catch(error){
-			console.log(error);
-			res.status(500).send('Nos apena decir que algo salió mal... Inténtelo más tarde');
-		}
+  res.sendFile(path.join(__dirname + '/public/index.html'));
 });
 
-// --------------------------------------------------
-
-// Método POST para agregar una canción // tiene un problema que no he podido resolver
-app.post('/canciones', (req, res) => {
-	try{
-		const cancion = req.body;
-		const canciones = JSON.parse(readFileSync('canciones.json'));
-		canciones.push(cancion);
-		writeFileSync('canciones.json', JSON.stringify(canciones));
-		res.send('Hemos agregado nuestro primer tema...')				
-	} catch(error) {
-		console.log(error)
-		res.status(500).send('Algo salió mal...')
-	}
+// GET /canciones
+app.get('/canciones', async (req, res) => {
+  const repertorio = await getCanciones();
+  res.json(repertorio);
 });
 
-// Método DELETE (borrar)
-app.delete('/canciones/:id', (req, res) => {
-	try {
-		const { id } = req.params;
-		const canciones = JSON.parse(readFileSync('canciones.json'));
-		const index = canciones.findIndex(c => c.id == parseInt(id));
-		//
-		if(index !== -1) {
-			canciones.splice(index, 1);
-			writeFileSync('canciones.json', JSON.stringify(canciones));
-			res.send('Canción eliminada con éxito')
-		} else {
-			res.status(404).send('No se ha encontrado la canción...');
-		}	
-	} catch(error) {
-		console.log(error);
-		res.status(500).send('Algo salió mal...');
-	}
+
+// POST /canciones
+app.post('/canciones', async (req, res) => {
+  const { id, titulo, artista, tono } = req.body;
+  const nuevaCancion = { id, titulo, artista, tono };
+
+  if ( !nuevaCancion.titulo.trim() || !nuevaCancion.artista.trim() || !nuevaCancion.tono.trim() ) {
+    return res.status(401).json({
+      message: 'Debe completar todos los campos...',
+    });
+  }
+
+  const canciones = await getCanciones();
+  const index = canciones.some((cancion) => cancion.id === nuevaCancion.id);
+
+  if (index) {
+    return res.status(401).json({
+      message: 'La canción ya existe.',
+    });
+  }
+
+  canciones.push(nuevaCancion);
+  await guardarCanciones(canciones);
+
+  res.status(201).json({ message: 'La canción agregada exitosamente...' });
 });
 
-//  Método PUT (modificar)
-app.put('/canciones/:id', (req, res) => {
-	try {
-		const { id } = req.params;
-		const cancion = req.body;
-		const canciones = JSON.parse(readFileSync('canciones.json'));
-		const index = canciones.findIndex(c => c.id == parseInt(id));
-		// 
-		if(index !== -1) {
-			canciones[index] = cancion;
-			writeFileSync('canciones.json', JSON.stringify(canciones));
-			res.status(200).send('Canción modificacada con éxito');
-		} else {
-			res.status(404).send('La canción no ha sido encontrada...')
-		}
-	} catch(error) {
-		consoleg.log(error);
-		res.send('Algo salió mal...')
-	}
+// PUT /canciones/:id
+app.put('/canciones/:id', async (req, res) => {
+  const id = parseInt(req.params.id);
+  const { titulo, artista, tono } = req.body;
+
+  if (!titulo.trim() || !artista.trim() || !tono.trim()) {
+    return res.status(401).json({ message: 'La canción no puede tener campos vacíos.', });
+  }
+
+  const repertorio = await getCanciones();
+  const index = repertorio.findIndex(c => c.id === id);
+
+  if (index !== -1) {
+    repertorio[index] = { id, titulo, artista, tono };
+    await guardarCanciones(repertorio);
+    res.json({ message: 'La canción fue actualizada exitosamente.', });
+  } else {
+    res.status(401).json({ message: 'No se encuentra el id de la canción.', });
+  }
 });
 
-// Manejo de error 404
+// DELETE /canciones/:id
+app.delete('/canciones/:id', async (req, res) => {
+  const id = parseInt(req.params.id);
+  const canciones = await getCanciones();
+  const nuevasCanciones = canciones.filter(c => c.id != id);
+
+  if (canciones.length != nuevasCanciones.length) {
+    await guardarCanciones(nuevasCanciones);
+    res.json({ message: 'La canción fue eliminada exitosamente' });
+  } else {
+    res.status(401).json({ message: 'No se encuentra el id de la canción.' });
+  }
+});
+
 app.use((req, res) => {
-	res.status(404).send('página no encontrada')
-})
+  res.status(404).send('Página no encontrada');
+});
+
+app.listen(PORT, () => {
+  console.log(`Servidor activo en http://localhost:${PORT}`);
+});
